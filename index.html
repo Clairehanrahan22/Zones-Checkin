@@ -18,7 +18,7 @@
     .nav-bar { position: absolute; top: 15px; left: 15px; z-index: 100; display: flex; gap: 15px; }
     .icon-btn { width: 45px; height: 45px; border-radius: 50%; background: #ffffff; border: 2px solid #ccc; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
 
-    /* Parking Lot - Multi-column wrapping */
+    /* Parking Lot */
     #parking-lot { 
       width: 20%; 
       height: 100vh; 
@@ -33,7 +33,7 @@
       flex-wrap: wrap; 
       align-content: flex-start;
       justify-content: center;
-      gap: 15px 10px; 
+      gap: 20px 10px; 
       overflow-y: auto; 
       z-index: 20; 
     }
@@ -54,23 +54,68 @@
     .zone { flex: 1; height: 100%; border-left: 2px solid rgba(0,0,0,0.1); display: flex; flex-direction: column; }
     .zone-body { flex: 1; position: relative; }
 
-    /* Student Avatars */
+    /* Student Avatars - Increased size to 80px */
     .student-avatar { 
-      width: 65px; 
-      height: 65px; 
+      width: 80px; 
+      height: 80px; 
       border-radius: 50%; 
       position: relative; 
       cursor: grab; 
-      background-size: cover; 
-      background-position: center; 
       border: 3px solid #fff; 
       box-shadow: 0 4px 8px rgba(0,0,0,0.25); 
       z-index: 50; 
       touch-action: none; 
       flex-shrink: 0;
+      background-color: #ffffff;
+      overflow: visible;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    .student-name { position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); background-color: white; color: black; font-size: 11px; font-weight: bold; padding: 2px 6px; border-radius: 8px; border: 1px solid #ccc; white-space: nowrap; }
-    .delete-btn { display: none; position: absolute; top: -5px; right: -5px; width: 22px; height: 22px; background-color: #ff3b30; color: white; border-radius: 50%; font-size: 14px; line-height: 20px; text-align: center; cursor: pointer; font-weight: bold; }
+
+    /* Inner Image with Aspect Fit */
+    .student-img {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: contain;
+      pointer-events: none;
+    }
+
+    .student-name { 
+      position: absolute; 
+      bottom: -8px; 
+      left: 50%; 
+      transform: translateX(-50%); 
+      background-color: white; 
+      color: black; 
+      font-size: 11px; 
+      font-weight: bold; 
+      padding: 2px 6px; 
+      border-radius: 8px; 
+      border: 1px solid #ccc; 
+      white-space: nowrap; 
+      z-index: 10;
+    }
+
+    .delete-btn { 
+      display: none; 
+      position: absolute; 
+      top: -5px; 
+      right: -5px; 
+      width: 22px; 
+      height: 22px; 
+      background-color: #ff3b30; 
+      color: white; 
+      border-radius: 50%; 
+      font-size: 14px; 
+      line-height: 20px; 
+      text-align: center; 
+      cursor: pointer; 
+      font-weight: bold; 
+      z-index: 20;
+    }
+    
     .edit-mode .delete-btn { display: block; }
     #image-input { display: none; }
   </style>
@@ -164,28 +209,12 @@
 
       const reader = new FileReader();
       reader.onload = function(e) {
-        const img = new Image();
-        img.src = e.target.result;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = 150; canvas.height = 150;
-          const ctx = canvas.getContext('2d');
-          
-          // Crop square center to prevent distortion
-          const minDim = Math.min(img.width, img.height);
-          const sx = (img.width - minDim) / 2;
-          const sy = (img.height - minDim) / 2;
-
-          ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, 150, 150);
-          
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
-          db.collection('classes').doc(currentClass).collection('students').add({
-            name: studentName,
-            image: compressedDataUrl,
-            zone: 'parking-lot',
-            x: null, y: null
-          });
-        };
+        db.collection('classes').doc(currentClass).collection('students').add({
+          name: studentName,
+          image: e.target.result,
+          zone: 'parking-lot',
+          x: null, y: null
+        });
       };
       reader.readAsDataURL(file);
       event.target.value = '';
@@ -214,7 +243,11 @@
         const avatar = document.createElement('div');
         avatar.className = 'student-avatar';
         avatar.id = student.id;
-        avatar.style.backgroundImage = `url(${student.image})`;
+
+        const img = document.createElement('img');
+        img.className = 'student-img';
+        img.src = student.image;
+        avatar.appendChild(img);
 
         const nameTag = document.createElement('div');
         nameTag.className = 'student-name';
