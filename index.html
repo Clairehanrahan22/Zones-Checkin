@@ -171,21 +171,41 @@
     let draggedElement = null;
     let offsetTop = 0, offsetLeft = 0;
     let studentsData = [];
+    let unsubscribeListener = null;
+
+    function resetClassToParkingLot(className, callback) {
+      db.collection('classes').doc(className).collection('students').get().then(snapshot => {
+        const batch = db.batch();
+        snapshot.forEach(doc => {
+          batch.update(doc.ref, { zone: 'parking-lot', x: null, y: null });
+        });
+        return batch.commit();
+      }).then(() => {
+        if (callback) callback();
+      }).catch(err => {
+        console.error("Error resetting class: ", err);
+        if (callback) callback();
+      });
+    }
 
     function openClass(className) {
       currentClass = className;
       document.getElementById('home-screen').style.display = 'none';
       document.getElementById('board-screen').style.display = 'block';
-      listenToClassData();
+
+      // Resets all student icons to the parking lot on launch
+      resetClassToParkingLot(currentClass, () => {
+        listenToClassData();
+      });
     }
 
     function goHome() {
+      if (unsubscribeListener) {
+        unsubscribeListener();
+        unsubscribeListener = null;
+      }
       if (currentClass) {
-        db.collection('classes').doc(currentClass).collection('students').get().then(snapshot => {
-          snapshot.forEach(doc => {
-            doc.ref.update({ zone: 'parking-lot', x: null, y: null });
-          });
-        });
+        resetClassToParkingLot(currentClass);
       }
       currentClass = null;
       document.getElementById('board-screen').style.display = 'none';
@@ -242,7 +262,9 @@
     }
 
     function listenToClassData() {
-      db.collection('classes').doc(currentClass).collection('students')
+      if (unsubscribeListener) unsubscribeListener();
+
+      unsubscribeListener = db.collection('classes').doc(currentClass).collection('students')
         .onSnapshot(snapshot => {
           studentsData = [];
           snapshot.forEach(doc => studentsData.push({ id: doc.id, ...doc.data() }));
