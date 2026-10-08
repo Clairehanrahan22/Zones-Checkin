@@ -261,22 +261,30 @@
       updateSyncStatus('Offline - using saved local data');
     });
 
+    function resetClassToParkingLot(className, callback) {
+      db.collection('classes').doc(className).collection('students').get().then(snapshot => {
+        const batch = db.batch();
+        snapshot.forEach(doc => {
+          batch.update(doc.ref, { zone: 'parking-lot', x: null, y: null });
+        });
+        return batch.commit();
+      }).then(() => {
+        if (callback) callback();
+      }).catch(err => {
+        console.error("Error resetting class: ", err);
+        if (callback) callback();
+      });
+    }
+
     function openClass(className) {
       currentClass = className;
       document.getElementById('home-screen').style.display = 'none';
       document.getElementById('board-screen').style.display = 'block';
 
-      // Load local cache immediately so the app still works even if browser storage is cleared or offline.
-      getStudentsLocal().then(localStudents => {
-        const classStudents = localStudents.filter(student => student.className === className);
-        studentsData = classStudents;
-        renderStudents();
-      }).catch(() => {
-        studentsData = [];
-        renderStudents();
+      // Reset all students to parking lot when opening a class
+      resetClassToParkingLot(currentClass, () => {
+        listenToClassData();
       });
-
-      listenToClassData();
     }
 
     function goHome() {
