@@ -10,15 +10,44 @@
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
     body, html { width: 100%; height: 100%; overflow: hidden; background-color: #f4f4f4; touch-action: none; }
 
-    /* Home Screen */
-    #home-screen { display: flex; justify-content: center; align-items: center; gap: 30px; height: 100vh; background-color: #ffffff; flex-wrap: wrap; padding: 20px; }
-    .class-btn { width: 180px; height: 110px; background-color: #708090; color: white; border: none; border-radius: 50%; font-size: 22px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.2); transition: transform 0.2s; }
-    .class-btn:hover { transform: scale(1.05); }
+    .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+    .screen.active { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+
+    /* Card Layouts for Teacher / Class Screens */
+    .card-grid { display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap; padding: 20px; max-width: 900px; }
+    
+    .card-btn { 
+      position: relative; 
+      width: 180px; 
+      height: 110px; 
+      background-color: #708090; 
+      color: white; 
+      border: none; 
+      border-radius: 20px; 
+      font-size: 20px; 
+      font-weight: bold; 
+      cursor: pointer; 
+      box-shadow: 0 4px 10px rgba(0,0,0,0.2); 
+      transition: transform 0.2s, background-color 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 10px;
+    }
+    .card-btn:hover { transform: scale(1.05); }
+    .card-btn.add-btn { background-color: #2e7d32; }
+
+    .screen-title { font-size: 28px; margin-bottom: 20px; color: #333; font-weight: bold; }
 
     /* Board Screen */
     #board-screen { display: none; width: 100vw; height: 100vh; position: relative; }
     .nav-bar { position: absolute; top: 15px; left: 15px; z-index: 100; display: flex; gap: 15px; }
     .icon-btn { width: 45px; height: 45px; border-radius: 50%; background: #ffffff; border: 2px solid #ccc; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+
+    /* Top Action Bars */
+    .top-right-bar { position: absolute; top: 15px; right: 15px; z-index: 100; display: flex; gap: 10px; }
+    .top-left-bar { position: absolute; top: 15px; left: 15px; z-index: 100; display: flex; gap: 10px; }
 
     /* Parking Lot */
     #parking-lot { 
@@ -42,7 +71,7 @@
       -webkit-overflow-scrolling: touch;
     }
     
-    /* Zones Container with Image Background */
+    /* Zones Board */
     #zones-container { 
       width: 80%; 
       height: 100vh; 
@@ -77,7 +106,6 @@
       justify-content: center;
     }
 
-    /* Inner Image */
     .student-img {
       width: 100%;
       height: 100%;
@@ -136,22 +164,35 @@
     }
   </style>
 
-  <!-- Firebase Libraries -->
+  <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
-  <!-- Home Screen -->
-  <div id="home-screen">
-    <button class="class-btn" onclick="openClass('1st Hour')">1st<br>Hour</button>
-    <button class="class-btn" onclick="openClass('3rd Hour')">3rd<br>Hour</button>
-    <button class="class-btn" onclick="openClass('5th Hour')">5th<br>Hour</button>
-    <button class="class-btn" onclick="openClass('Homeroom')">Homeroom</button>
+  <!-- Teacher Selection Screen -->
+  <div id="teacher-screen" class="screen active">
+    <div class="top-right-bar">
+      <button class="icon-btn" onclick="toggleTeacherEditMode()">✏️</button>
+    </div>
+    <div class="screen-title">Select Teacher</div>
+    <div class="card-grid" id="teacher-grid"></div>
+  </div>
+
+  <!-- Class Selection Screen -->
+  <div id="home-screen" class="screen">
+    <div class="top-left-bar">
+      <button class="icon-btn" onclick="goTeacherSelect()">←</button>
+    </div>
+    <div class="top-right-bar">
+      <button class="icon-btn" onclick="toggleClassEditMode()">✏️</button>
+    </div>
+    <div class="screen-title" id="class-screen-title">Classes</div>
+    <div class="card-grid" id="class-grid"></div>
   </div>
 
   <!-- Board Screen -->
-  <div id="board-screen">
+  <div id="board-screen" class="screen">
     <div class="nav-bar">
       <button class="icon-btn" onclick="goHome()">←</button>
       <button class="icon-btn" id="add-student-btn" style="display:none;" onclick="triggerFileInput()">+</button>
@@ -171,60 +212,6 @@
   </div>
 
   <script>
-    // ============ IndexedDB (device cache) ============
-    let dbLocal;
-
-    function initIndexedDB() {
-      return new Promise((resolve, reject) => {
-        const request = indexedDB.open('ZonesCheckinDB', 1);
-
-        request.onupgradeneeded = (event) => {
-          const db = event.target.result;
-          if (!db.objectStoreNames.contains('students')) {
-            db.createObjectStore('students', { keyPath: 'id' });
-          }
-        };
-
-        request.onsuccess = () => {
-          dbLocal = request.result;
-          resolve();
-        };
-
-        request.onerror = () => reject(request.error);
-      });
-    }
-
-    function saveStudentLocal(student) {
-      return new Promise((resolve, reject) => {
-        const transaction = dbLocal.transaction(['students'], 'readwrite');
-        const store = transaction.objectStore('students');
-        const req = store.put(student);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    }
-
-    function getStudentsLocal() {
-      return new Promise((resolve, reject) => {
-        const transaction = dbLocal.transaction(['students'], 'readonly');
-        const store = transaction.objectStore('students');
-        const req = store.getAll();
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-    }
-
-    function deleteStudentLocal(id) {
-      return new Promise((resolve, reject) => {
-        const transaction = dbLocal.transaction(['students'], 'readwrite');
-        const store = transaction.objectStore('students');
-        const req = store.delete(id);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    }
-
-    // ============ Firebase ============
     const firebaseConfig = {
       apiKey: "AIzaSyDrdoikBD-0sOK9tSxLWXGyDTNCzNR5Z6g",
       authDomain: "zones-checkin-12e9e.firebaseapp.com",
@@ -237,52 +224,186 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
 
+    let currentTeacher = null;
     let currentClass = null;
     let isEditMode = false;
+    let isTeacherEditMode = false;
+    let isClassEditMode = false;
     let draggedElement = null;
     let offsetTop = 0, offsetLeft = 0;
     let studentsData = [];
     let unsubscribeListener = null;
-    let isOnline = navigator.onLine;
 
     function updateSyncStatus(message) {
       const el = document.getElementById('sync-status');
       if (el) el.textContent = message;
     }
 
-    window.addEventListener('online', () => {
-      isOnline = true;
-      updateSyncStatus('Online - syncing with Firebase');
-      if (currentClass) listenToClassData();
-    });
-
-    window.addEventListener('offline', () => {
-      isOnline = false;
-      updateSyncStatus('Offline - using saved local data');
-    });
-
-    function resetClassToParkingLot(className, callback) {
-      db.collection('classes').doc(className).collection('students').get().then(snapshot => {
-        const batch = db.batch();
-        snapshot.forEach(doc => {
-          batch.update(doc.ref, { zone: 'parking-lot', x: null, y: null });
-        });
-        return batch.commit();
-      }).then(() => {
-        if (callback) callback();
-      }).catch(err => {
-        console.error("Error resetting class: ", err);
-        if (callback) callback();
+    function showScreen(screenId) {
+      document.querySelectorAll('.screen').forEach(s => {
+        s.classList.remove('active');
+        s.style.display = 'none';
       });
+      const target = document.getElementById(screenId);
+      if (target) {
+        target.classList.add('active');
+        target.style.display = (screenId === 'board-screen') ? 'block' : 'flex';
+      }
+    }
+
+    // Teacher Management
+    function loadTeachers() {
+      showScreen('teacher-screen');
+      db.collection('teachers').onSnapshot(snapshot => {
+        const grid = document.getElementById('teacher-grid');
+        grid.innerHTML = '';
+        
+        let teachers = [];
+        snapshot.forEach(doc => teachers.push({ id: doc.id, ...doc.data() }));
+
+        if (teachers.length === 0) {
+          db.collection('teachers').doc('Default Teacher').set({ name: 'Default Teacher' });
+          return;
+        }
+
+        teachers.forEach(t => {
+          const btn = document.createElement('button');
+          btn.className = 'card-btn';
+          btn.textContent = t.name;
+          btn.onclick = () => selectTeacher(t.name);
+
+          if (isTeacherEditMode) {
+            const delBtn = document.createElement('div');
+            delBtn.className = 'delete-btn';
+            delBtn.style.display = 'block';
+            delBtn.innerHTML = '×';
+            delBtn.onclick = (e) => { e.stopPropagation(); deleteTeacher(t.id); };
+            btn.appendChild(delBtn);
+          }
+
+          grid.appendChild(btn);
+        });
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'card-btn add-btn';
+        addBtn.textContent = '+ Add Teacher';
+        addBtn.onclick = addTeacher;
+        grid.appendChild(addBtn);
+      });
+    }
+
+    function toggleTeacherEditMode() {
+      isTeacherEditMode = !isTeacherEditMode;
+      loadTeachers();
+    }
+
+    function addTeacher() {
+      const name = prompt("Enter teacher name:");
+      if (name && name.trim()) {
+        db.collection('teachers').doc(name.trim()).set({ name: name.trim() });
+      }
+    }
+
+    function deleteTeacher(id) {
+      if (confirm(`Delete teacher "${id}" and all associated classes?`)) {
+        db.collection('teachers').doc(id).delete();
+      }
+    }
+
+    function selectTeacher(teacherName) {
+      currentTeacher = teacherName;
+      document.getElementById('class-screen-title').textContent = `${currentTeacher}'s Classes`;
+      loadClasses();
+    }
+
+    function goTeacherSelect() {
+      currentTeacher = null;
+      loadTeachers();
+    }
+
+    // Class Management
+    function loadClasses() {
+      showScreen('home-screen');
+      db.collection('teachers').doc(currentTeacher).collection('classes').onSnapshot(snapshot => {
+        const grid = document.getElementById('class-grid');
+        grid.innerHTML = '';
+
+        let classes = [];
+        snapshot.forEach(doc => classes.push({ id: doc.id, ...doc.data() }));
+
+        if (classes.length === 0 && snapshot.empty) {
+          const defaults = ['1st Hour', '3rd Hour', '5th Hour', 'Homeroom'];
+          defaults.forEach(c => db.collection('teachers').doc(currentTeacher).collection('classes').doc(c).set({ name: c }));
+          return;
+        }
+
+        classes.forEach(c => {
+          const btn = document.createElement('button');
+          btn.className = 'card-btn';
+          btn.textContent = c.name;
+          btn.onclick = () => openClass(c.name);
+
+          if (isClassEditMode) {
+            const delBtn = document.createElement('div');
+            delBtn.className = 'delete-btn';
+            delBtn.style.display = 'block';
+            delBtn.innerHTML = '×';
+            delBtn.onclick = (e) => { e.stopPropagation(); deleteClass(c.id); };
+            btn.appendChild(delBtn);
+          }
+
+          grid.appendChild(btn);
+        });
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'card-btn add-btn';
+        addBtn.textContent = '+ Add Class';
+        addBtn.onclick = addClass;
+        grid.appendChild(addBtn);
+      });
+    }
+
+    function toggleClassEditMode() {
+      isClassEditMode = !isClassEditMode;
+      loadClasses();
+    }
+
+    function addClass() {
+      const className = prompt("Enter class name:");
+      if (className && className.trim()) {
+        db.collection('teachers').doc(currentTeacher).collection('classes').doc(className.trim()).set({ name: className.trim() });
+      }
+    }
+
+    function deleteClass(classId) {
+      if (confirm(`Delete class "${classId}"?`)) {
+        db.collection('teachers').doc(currentTeacher).collection('classes').doc(classId).delete();
+      }
+    }
+
+    // Board Logic
+    function resetClassToParkingLot(callback) {
+      db.collection('teachers').doc(currentTeacher)
+        .collection('classes').doc(currentClass)
+        .collection('students').get().then(snapshot => {
+          const batch = db.batch();
+          snapshot.forEach(doc => {
+            batch.update(doc.ref, { zone: 'parking-lot', x: null, y: null });
+          });
+          return batch.commit();
+        }).then(() => {
+          if (callback) callback();
+        }).catch(err => {
+          console.error("Error resetting class: ", err);
+          if (callback) callback();
+        });
     }
 
     function openClass(className) {
       currentClass = className;
-      document.getElementById('home-screen').style.display = 'none';
-      document.getElementById('board-screen').style.display = 'block';
+      showScreen('board-screen');
 
-      // Reset all students to parking lot when opening a class
-      resetClassToParkingLot(currentClass, () => {
+      resetClassToParkingLot(() => {
         listenToClassData();
       });
     }
@@ -293,9 +414,8 @@
         unsubscribeListener = null;
       }
       currentClass = null;
-      document.getElementById('board-screen').style.display = 'none';
-      document.getElementById('home-screen').style.display = 'flex';
       if (isEditMode) toggleEditMode();
+      loadClasses();
     }
 
     function toggleEditMode() {
@@ -336,19 +456,13 @@
             zone: 'parking-lot',
             x: null,
             y: null,
-            className: currentClass,
             lastModified: new Date().toISOString()
           };
 
-          saveStudentLocal(student).then(() => {
-            studentsData.push(student);
-            renderStudents();
-          }).catch(err => console.error('Failed to save local student', err));
-
-          if (isOnline) {
-            db.collection('classes').doc(currentClass).collection('students').doc(student.id).set(student)
-              .catch(err => console.error('Failed to sync student to Firebase', err));
-          }
+          db.collection('teachers').doc(currentTeacher)
+            .collection('classes').doc(currentClass)
+            .collection('students').doc(student.id).set(student)
+            .catch(err => console.error('Failed to sync student to Firebase', err));
         };
       };
       reader.readAsDataURL(file);
@@ -356,36 +470,30 @@
     }
 
     function deleteStudent(id) {
-      const filtered = studentsData.filter(student => student.id !== id);
-      studentsData = filtered;
-      renderStudents();
-
-      deleteStudentLocal(id).catch(err => console.error('Failed to delete local student', err));
-
-      if (isOnline) {
-        db.collection('classes').doc(currentClass).collection('students').doc(id).delete()
-          .catch(err => console.error('Failed to delete student from Firebase', err));
-      }
+      db.collection('teachers').doc(currentTeacher)
+        .collection('classes').doc(currentClass)
+        .collection('students').doc(id).delete()
+        .catch(err => console.error('Failed to delete student from Firebase', err));
     }
 
     function listenToClassData() {
       if (unsubscribeListener) unsubscribeListener();
 
-      unsubscribeListener = db.collection('classes').doc(currentClass).collection('students')
+      unsubscribeListener = db.collection('teachers').doc(currentTeacher)
+        .collection('classes').doc(currentClass)
+        .collection('students')
         .onSnapshot(snapshot => {
           const liveStudents = [];
           snapshot.forEach(doc => {
-            const student = { id: doc.id, ...doc.data() };
-            liveStudents.push(student);
-            saveStudentLocal(student).catch(err => console.error('Failed to save to IndexedDB', err));
+            liveStudents.push({ id: doc.id, ...doc.data() });
           });
 
-          studentsData = liveStudents.filter(student => student.className === currentClass || !student.className);
+          studentsData = liveStudents;
           renderStudents();
           updateSyncStatus('Synced with Firebase');
         }, err => {
           console.error('Firebase listener error', err);
-          updateSyncStatus('Offline - using saved local data');
+          updateSyncStatus('Error connecting to Firebase');
         });
     }
 
@@ -497,27 +605,16 @@
         student.y = y;
         student.lastModified = new Date().toISOString();
 
-        saveStudentLocal(student).catch(err => console.error('Failed to save dragged student locally', err));
-
-        if (isOnline) {
-          db.collection('classes').doc(currentClass).collection('students').doc(student.id).update({ zone, x, y })
-            .catch(err => console.error('Failed to update student position in Firebase', err));
-        }
+        db.collection('teachers').doc(currentTeacher)
+          .collection('classes').doc(currentClass)
+          .collection('students').doc(student.id).update({ zone, x, y })
+          .catch(err => console.error('Failed to update student position in Firebase', err));
       }
 
       draggedElement = null;
     }
 
-    // ============ App bootstrap ============
-    initIndexedDB()
-      .then(() => {
-        console.log('IndexedDB ready');
-        updateSyncStatus(isOnline ? 'Ready' : 'Offline - using saved local data');
-      })
-      .catch(err => {
-        console.error('IndexedDB failed to initialize', err);
-        updateSyncStatus('Storage unavailable');
-      });
+    loadTeachers();
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(err => {
