@@ -34,11 +34,27 @@
       justify-content: center;
       text-align: center;
       padding: 10px;
+      user-select: none;
     }
     .card-btn:hover { transform: scale(1.05); }
     .card-btn.add-btn { background-color: #2e7d32; }
+    .card-btn.dragging { opacity: 0.4; border: 2px dashed #fff; }
 
-    .screen-title { font-size: 28px; margin-bottom: 20px; color: #333; font-weight: bold; }
+    .screen-title-container { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+    .screen-title { font-size: 28px; color: #333; font-weight: bold; }
+    .edit-title-btn { 
+      display: none; 
+      background: #007aff; 
+      color: white; 
+      border: none; 
+      border-radius: 50%; 
+      width: 32px; 
+      height: 32px; 
+      font-size: 16px; 
+      cursor: pointer; 
+      align-items: center; 
+      justify-content: center; 
+    }
 
     /* Board Screen */
     #board-screen { display: none; width: 100vw; height: 100vh; position: relative; }
@@ -213,7 +229,9 @@
     <div class="top-right-bar">
       <button class="icon-btn" onclick="toggleTeacherEditMode()">✏️</button>
     </div>
-    <div class="screen-title">Select Teacher</div>
+    <div class="screen-title-container">
+      <div class="screen-title">Select Teacher</div>
+    </div>
     <div class="card-grid" id="teacher-grid"></div>
   </div>
 
@@ -225,7 +243,10 @@
     <div class="top-right-bar">
       <button class="icon-btn" onclick="toggleClassEditMode()">✏️</button>
     </div>
-    <div class="screen-title" id="class-screen-title">Classes</div>
+    <div class="screen-title-container">
+      <div class="screen-title" id="class-screen-title">Classes</div>
+      <button class="edit-title-btn" id="rename-teacher-btn" onclick="renameTeacherPrompt()">✏️</button>
+    </div>
     <div class="card-grid" id="class-grid"></div>
   </div>
 
@@ -280,6 +301,7 @@
     let isTeacherEditMode = false;
     let isClassEditMode = false;
     let draggedElement = null;
+    let draggedCard = null;
     let offsetTop = 0, offsetLeft = 0;
     let studentsData = [];
     let unsubscribeListener = null;
@@ -293,17 +315,17 @@
     }
 
     function getLocalClasses(teacher) {
-      return JSON.parse(localStorage.getItem(`classes_${teacher}`) || '["1st Hour", "3rd Hour", "5th Hour", "Homeroom"]');
+      return JSON.parse(localStorage.getItem(`classes_${teacher}`) || '["1st Hour", "3rd Hour", "5th Hour", "Core", "Homeroom"]');
     }
     function saveLocalClasses(teacher, list) {
       localStorage.setItem(`classes_${teacher}`, JSON.stringify(list));
     }
 
     // Modal Dialog Helper
-    function openModal(title, placeholder, onSave) {
+    function openModal(title, placeholder, defaultValue, onSave) {
       document.getElementById('modal-title').textContent = title;
       const input = document.getElementById('modal-input');
-      input.value = '';
+      input.value = defaultValue || '';
       input.placeholder = placeholder;
       document.getElementById('custom-modal').style.display = 'flex';
       input.focus();
@@ -333,21 +355,19 @@
     // Teacher Management
     function loadTeachers() {
       showScreen('teacher-screen');
-      const grid = document.getElementById('teacher-grid');
       
       db.collection('teachers').onSnapshot(snapshot => {
         let teachers = [];
         snapshot.forEach(doc => teachers.push({ id: doc.id, name: doc.data().name || doc.id }));
         if (teachers.length === 0 && snapshot.empty) {
-          teachers = [{ id: 'Teacher 1', name: 'Teacher 1' }];
-          db.collection('teachers').doc('Teacher 1').set({ name: 'Teacher 1' }).catch(() => {});
+          teachers = [{ id: 'Claire', name: 'Claire' }];
+          db.collection('teachers').doc('Claire').set({ name: 'Claire' }).catch(() => {});
         }
         saveLocalTeachers(teachers.map(t => t.name));
         renderTeacherGrid(teachers.map(t => t.name));
       }, err => {
-        console.warn("Firestore access restricted, using local storage", err);
         let local = getLocalTeachers();
-        if (local.length === 0) local = ['Teacher 1'];
+        if (local.length === 0) local = ['Claire'];
         saveLocalTeachers(local);
         renderTeacherGrid(local);
       });
@@ -388,12 +408,34 @@
     }
 
     function addTeacherPrompt() {
-      openModal("Add Teacher", "Teacher Name", (name) => {
+      openModal("Add Teacher", "Teacher Name", "", (name) => {
         db.collection('teachers').doc(name).set({ name }).catch(() => {});
         let local = getLocalTeachers();
         if (!local.includes(name)) local.push(name);
         saveLocalTeachers(local);
         renderTeacherGrid(local);
+      });
+    }
+
+    function renameTeacherPrompt() {
+      openModal("Rename Profile", "Teacher Name", currentTeacher, (newName) => {
+        if (newName === currentTeacher) return;
+        
+        const oldName = currentTeacher;
+        // Update in DB
+        db.collection('teachers').doc(oldName).delete().catch(() => {});
+        db.collection('teachers').doc(newName).set({ name: newName }).catch(() => {});
+
+        // Move local data
+        let localTeachers = getLocalTeachers().map(t => t === oldName ? newName : t);
+        saveLocalTeachers(localTeachers);
+        let oldClasses = getLocalClasses(oldName);
+        saveLocalClasses(newName, oldClasses);
+        localStorage.removeItem(`classes_${oldName}`);
+
+        currentTeacher = newName;
+        document.getElementById('class-screen-title').textContent = `${currentTeacher}'s Classes`;
+        loadClasses();
       });
     }
 
@@ -414,19 +456,20 @@
 
     function goTeacherSelect() {
       currentTeacher = null;
+      if (isClassEditMode) toggleClassEditMode();
       loadTeachers();
     }
 
-    // Class Management
+    // Class Management & Drag Reordering
     function loadClasses() {
       showScreen('home-screen');
       
-      db.collection('teachers').doc(currentTeacher).collection('classes').onSnapshot(snapshot => {
+      db.collection('teachers').doc(currentTeacher).collection('classes').orderBy('order', 'asc').onSnapshot(snapshot => {
         let classes = [];
         snapshot.forEach(doc => classes.push(doc.id));
         if (classes.length === 0 && snapshot.empty) {
-          classes = ['1st Hour', '3rd Hour', '5th Hour', 'Homeroom'];
-          classes.forEach(c => db.collection('teachers').doc(currentTeacher).collection('classes').doc(c).set({ name: c }).catch(() => {}));
+          classes = getLocalClasses(currentTeacher);
+          classes.forEach((c, idx) => db.collection('teachers').doc(currentTeacher).collection('classes').doc(c).set({ name: c, order: idx }).catch(() => {}));
         }
         saveLocalClasses(currentTeacher, classes);
         renderClassGrid(classes);
@@ -440,13 +483,44 @@
       const grid = document.getElementById('class-grid');
       grid.innerHTML = '';
 
-      classes.forEach(cName => {
+      classes.forEach((cName, index) => {
         const btn = document.createElement('button');
         btn.className = 'card-btn';
         btn.textContent = cName;
-        btn.onclick = () => openClass(cName);
+        btn.dataset.className = cName;
+        btn.dataset.index = index;
+        btn.onclick = () => { if (!isClassEditMode) openClass(cName); };
 
         if (isClassEditMode) {
+          btn.draggable = true;
+          
+          btn.ondragstart = (e) => {
+            draggedCard = btn;
+            btn.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+          };
+
+          btn.ondragend = () => {
+            btn.classList.remove('dragging');
+            draggedCard = null;
+            saveClassOrderFromDOM();
+          };
+
+          btn.ondragover = (e) => {
+            e.preventDefault();
+            if (draggedCard && draggedCard !== btn) {
+              const allCards = [...grid.querySelectorAll('.card-btn:not(.add-btn)')];
+              const draggedIdx = allCards.indexOf(draggedCard);
+              const targetIdx = allCards.indexOf(btn);
+
+              if (draggedIdx < targetIdx) {
+                grid.insertBefore(draggedCard, btn.nextSibling);
+              } else {
+                grid.insertBefore(draggedCard, btn);
+              }
+            }
+          };
+
           const delBtn = document.createElement('div');
           delBtn.className = 'delete-btn';
           delBtn.style.display = 'block';
@@ -465,17 +539,34 @@
       grid.appendChild(addBtn);
     }
 
+    function saveClassOrderFromDOM() {
+      const grid = document.getElementById('class-grid');
+      const cards = grid.querySelectorAll('.card-btn:not(.add-btn)');
+      const newOrder = [];
+
+      cards.forEach((card, idx) => {
+        const cName = card.dataset.className;
+        newOrder.push(cName);
+        db.collection('teachers').doc(currentTeacher).collection('classes').doc(cName).update({ order: idx }).catch(() => {});
+      });
+
+      saveLocalClasses(currentTeacher, newOrder);
+    }
+
     function toggleClassEditMode() {
       isClassEditMode = !isClassEditMode;
+      document.getElementById('rename-teacher-btn').style.display = isClassEditMode ? 'flex' : 'none';
       renderClassGrid(getLocalClasses(currentTeacher));
     }
 
     function addClassPrompt() {
-      openModal("Add Class", "Class Name", (className) => {
-        db.collection('teachers').doc(currentTeacher).collection('classes').doc(className).set({ name: className }).catch(() => {});
+      openModal("Add Class", "Class Name", "", (className) => {
         let local = getLocalClasses(currentTeacher);
-        if (!local.includes(className)) local.push(className);
-        saveLocalClasses(currentTeacher, local);
+        if (!local.includes(className)) {
+          local.push(className);
+          db.collection('teachers').doc(currentTeacher).collection('classes').doc(className).set({ name: className, order: local.length - 1 }).catch(() => {});
+          saveLocalClasses(currentTeacher, local);
+        }
         renderClassGrid(local);
       });
     }
@@ -518,7 +609,7 @@
       const file = event.target.files[0];
       if (!file) return;
 
-      openModal("Add Student", "Student Name", (studentName) => {
+      openModal("Add Student", "Student Name", "", (studentName) => {
         const reader = new FileReader();
         reader.onload = function(e) {
           const img = new Image();
@@ -570,14 +661,36 @@
     function listenToClassData() {
       if (unsubscribeListener) unsubscribeListener();
 
+      // Listen to new teacher profile student collection
       unsubscribeListener = db.collection('teachers').doc(currentTeacher)
         .collection('classes').doc(currentClass)
         .collection('students')
         .onSnapshot(snapshot => {
           const liveStudents = [];
           snapshot.forEach(doc => liveStudents.push({ id: doc.id, ...doc.data() }));
-          studentsData = liveStudents;
-          renderStudents();
+
+          // Auto-Import from legacy database path if new teacher collection is empty
+          if (liveStudents.length === 0) {
+            db.collection('classes').doc(currentClass).collection('students').get().then(legacySnap => {
+              legacySnap.forEach(legacyDoc => {
+                const s = { id: legacyDoc.id, ...legacyDoc.data() };
+                liveStudents.push(s);
+                // Copy over to new teacher collection
+                db.collection('teachers').doc(currentTeacher)
+                  .collection('classes').doc(currentClass)
+                  .collection('students').doc(s.id).set(s).catch(() => {});
+              });
+              studentsData = liveStudents;
+              renderStudents();
+            }).catch(() => {
+              studentsData = liveStudents;
+              renderStudents();
+            });
+          } else {
+            studentsData = liveStudents;
+            renderStudents();
+          }
+
           document.getElementById('sync-status').textContent = 'Synced';
         }, err => {
           renderStudents();
