@@ -58,7 +58,7 @@
 
     /* Board Screen */
     #board-screen { display: none; width: 100vw; height: 100vh; position: relative; }
-    .nav-bar { position: absolute; top: 15px; left: 15px; z-index: 100; display: flex; gap: 15px; }
+    .nav-bar { position: absolute; top: 15px; left: 15px; z-index: 100; display: flex; gap: 12px; }
     .icon-btn { width: 45px; height: 45px; border-radius: 50%; background: #ffffff; border: 2px solid #ccc; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 
     /* Action Bars */
@@ -254,6 +254,7 @@
   <div id="board-screen" class="screen">
     <div class="nav-bar">
       <button class="icon-btn" onclick="goHome()">←</button>
+      <button class="icon-btn" onclick="resetBoardToParkingLot()" title="Reset All to Parking Lot">↺</button>
       <button class="icon-btn" id="add-student-btn" style="display:none;" onclick="triggerFileInput()">+</button>
       <button class="icon-btn" onclick="toggleEditMode()">✏️</button>
     </div>
@@ -306,7 +307,7 @@
     let studentsData = [];
     let unsubscribeListener = null;
 
-    // Fallback Local Storage
+    // Local Storage Helpers
     function getLocalTeachers() {
       return JSON.parse(localStorage.getItem('teachers') || '[]');
     }
@@ -321,7 +322,7 @@
       localStorage.setItem(`classes_${teacher}`, JSON.stringify(list));
     }
 
-    // Modal Dialog Helper
+    // Modal Helpers
     function openModal(title, placeholder, defaultValue, onSave) {
       document.getElementById('modal-title').textContent = title;
       const input = document.getElementById('modal-input');
@@ -420,13 +421,11 @@
     function renameTeacherPrompt() {
       openModal("Rename Profile", "Teacher Name", currentTeacher, (newName) => {
         if (newName === currentTeacher) return;
-        
+
         const oldName = currentTeacher;
-        // Update in DB
         db.collection('teachers').doc(oldName).delete().catch(() => {});
         db.collection('teachers').doc(newName).set({ name: newName }).catch(() => {});
 
-        // Move local data
         let localTeachers = getLocalTeachers().map(t => t === oldName ? newName : t);
         saveLocalTeachers(localTeachers);
         let oldClasses = getLocalClasses(oldName);
@@ -460,7 +459,7 @@
       loadTeachers();
     }
 
-    // Class Management & Drag Reordering
+    // Class Management
     function loadClasses() {
       showScreen('home-screen');
       
@@ -580,10 +579,35 @@
       }
     }
 
+    // Reset Students to Parking Lot
+    function resetBoardToParkingLot() {
+      if (!currentTeacher || !currentClass) return;
+
+      db.collection('teachers').doc(currentTeacher)
+        .collection('classes').doc(currentClass)
+        .collection('students').get().then(snapshot => {
+          const batch = db.batch();
+          snapshot.forEach(doc => {
+            batch.update(doc.ref, { zone: 'parking-lot', x: null, y: null });
+          });
+          return batch.commit();
+        }).then(() => {
+          studentsData.forEach(s => {
+            s.zone = 'parking-lot';
+            s.x = null;
+            s.y = null;
+          });
+          renderStudents();
+        }).catch(err => console.error("Error resetting students to parking lot", err));
+    }
+
     // Board Logic
     function openClass(className) {
       currentClass = className;
       showScreen('board-screen');
+
+      // Auto Reset all students to parking lot on class open
+      resetBoardToParkingLot();
       listenToClassData();
     }
 
@@ -661,7 +685,6 @@
     function listenToClassData() {
       if (unsubscribeListener) unsubscribeListener();
 
-      // Listen to new teacher profile student collection
       unsubscribeListener = db.collection('teachers').doc(currentTeacher)
         .collection('classes').doc(currentClass)
         .collection('students')
@@ -669,13 +692,12 @@
           const liveStudents = [];
           snapshot.forEach(doc => liveStudents.push({ id: doc.id, ...doc.data() }));
 
-          // Auto-Import from legacy database path if new teacher collection is empty
+          // Legacy Auto-Import
           if (liveStudents.length === 0) {
             db.collection('classes').doc(currentClass).collection('students').get().then(legacySnap => {
               legacySnap.forEach(legacyDoc => {
-                const s = { id: legacyDoc.id, ...legacyDoc.data() };
+                const s = { id: legacyDoc.id, ...legacyDoc.data(), zone: 'parking-lot', x: null, y: null };
                 liveStudents.push(s);
-                // Copy over to new teacher collection
                 db.collection('teachers').doc(currentTeacher)
                   .collection('classes').doc(currentClass)
                   .collection('students').doc(s.id).set(s).catch(() => {});
