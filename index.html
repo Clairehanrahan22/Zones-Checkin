@@ -13,7 +13,7 @@
     .screen { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
     .screen.active { display: flex; flex-direction: column; align-items: center; justify-content: center; }
 
-    /* Card Layouts for Teacher / Class Screens */
+    /* Card Layouts */
     .card-grid { display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap; padding: 20px; max-width: 900px; }
     
     .card-btn { 
@@ -45,7 +45,7 @@
     .nav-bar { position: absolute; top: 15px; left: 15px; z-index: 100; display: flex; gap: 15px; }
     .icon-btn { width: 45px; height: 45px; border-radius: 50%; background: #ffffff; border: 2px solid #ccc; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 
-    /* Top Action Bars */
+    /* Action Bars */
     .top-right-bar { position: absolute; top: 15px; right: 15px; z-index: 100; display: flex; gap: 10px; }
     .top-left-bar { position: absolute; top: 15px; left: 15px; z-index: 100; display: flex; gap: 10px; }
 
@@ -148,7 +148,7 @@
       z-index: 20;
     }
     
-    .edit-mode .delete-btn { display: block; }
+    .edit-mode .delete-btn { display: block !important; }
     #image-input { display: none; }
 
     .sync-status {
@@ -162,6 +162,44 @@
       border-radius: 4px;
       z-index: 100;
     }
+
+    /* Modal Styling */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-box {
+      background: white;
+      padding: 25px;
+      border-radius: 12px;
+      width: 320px;
+      text-align: center;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    }
+    .modal-box h3 { margin-bottom: 15px; color: #333; }
+    .modal-box input {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 15px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 16px;
+    }
+    .modal-actions { display: flex; gap: 10px; justify-content: center; }
+    .modal-btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .modal-btn.confirm { background-color: #2e7d32; color: white; }
+    .modal-btn.cancel { background-color: #ccc; color: #333; }
   </style>
 
   <!-- Firebase SDK -->
@@ -211,6 +249,18 @@
     </div>
   </div>
 
+  <!-- Custom Input Modal -->
+  <div class="modal-overlay" id="custom-modal">
+    <div class="modal-box">
+      <h3 id="modal-title">Enter Name</h3>
+      <input type="text" id="modal-input" placeholder="Name...">
+      <div class="modal-actions">
+        <button class="modal-btn cancel" onclick="closeModal()">Cancel</button>
+        <button class="modal-btn confirm" id="modal-confirm-btn">Save</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const firebaseConfig = {
       apiKey: "AIzaSyDrdoikBD-0sOK9tSxLWXGyDTNCzNR5Z6g",
@@ -234,9 +284,38 @@
     let studentsData = [];
     let unsubscribeListener = null;
 
-    function updateSyncStatus(message) {
-      const el = document.getElementById('sync-status');
-      if (el) el.textContent = message;
+    // Fallback Local Storage
+    function getLocalTeachers() {
+      return JSON.parse(localStorage.getItem('teachers') || '[]');
+    }
+    function saveLocalTeachers(list) {
+      localStorage.setItem('teachers', JSON.stringify(list));
+    }
+
+    function getLocalClasses(teacher) {
+      return JSON.parse(localStorage.getItem(`classes_${teacher}`) || '["1st Hour", "3rd Hour", "5th Hour", "Homeroom"]');
+    }
+    function saveLocalClasses(teacher, list) {
+      localStorage.setItem(`classes_${teacher}`, JSON.stringify(list));
+    }
+
+    // Modal Dialog Helper
+    function openModal(title, placeholder, onSave) {
+      document.getElementById('modal-title').textContent = title;
+      const input = document.getElementById('modal-input');
+      input.value = '';
+      input.placeholder = placeholder;
+      document.getElementById('custom-modal').style.display = 'flex';
+      input.focus();
+
+      document.getElementById('modal-confirm-btn').onclick = () => {
+        const val = input.value.trim();
+        if (val) onSave(val);
+        closeModal();
+      };
+    }
+    function closeModal() {
+      document.getElementById('custom-modal').style.display = 'none';
     }
 
     function showScreen(screenId) {
@@ -254,59 +333,76 @@
     // Teacher Management
     function loadTeachers() {
       showScreen('teacher-screen');
+      const grid = document.getElementById('teacher-grid');
+      
       db.collection('teachers').onSnapshot(snapshot => {
-        const grid = document.getElementById('teacher-grid');
-        grid.innerHTML = '';
-        
         let teachers = [];
-        snapshot.forEach(doc => teachers.push({ id: doc.id, ...doc.data() }));
+        snapshot.forEach(doc => teachers.push({ id: doc.id, name: doc.data().name || doc.id }));
+        if (teachers.length === 0 && snapshot.empty) {
+          teachers = [{ id: 'Teacher 1', name: 'Teacher 1' }];
+          db.collection('teachers').doc('Teacher 1').set({ name: 'Teacher 1' }).catch(() => {});
+        }
+        saveLocalTeachers(teachers.map(t => t.name));
+        renderTeacherGrid(teachers.map(t => t.name));
+      }, err => {
+        console.warn("Firestore access restricted, using local storage", err);
+        let local = getLocalTeachers();
+        if (local.length === 0) local = ['Teacher 1'];
+        saveLocalTeachers(local);
+        renderTeacherGrid(local);
+      });
+    }
 
-        if (teachers.length === 0) {
-          db.collection('teachers').doc('Default Teacher').set({ name: 'Default Teacher' });
-          return;
+    function renderTeacherGrid(teachers) {
+      const grid = document.getElementById('teacher-grid');
+      grid.innerHTML = '';
+
+      teachers.forEach(tName => {
+        const btn = document.createElement('button');
+        btn.className = 'card-btn';
+        btn.textContent = tName;
+        btn.onclick = () => selectTeacher(tName);
+
+        if (isTeacherEditMode) {
+          const delBtn = document.createElement('div');
+          delBtn.className = 'delete-btn';
+          delBtn.style.display = 'block';
+          delBtn.innerHTML = '×';
+          delBtn.onclick = (e) => { e.stopPropagation(); deleteTeacher(tName); };
+          btn.appendChild(delBtn);
         }
 
-        teachers.forEach(t => {
-          const btn = document.createElement('button');
-          btn.className = 'card-btn';
-          btn.textContent = t.name;
-          btn.onclick = () => selectTeacher(t.name);
-
-          if (isTeacherEditMode) {
-            const delBtn = document.createElement('div');
-            delBtn.className = 'delete-btn';
-            delBtn.style.display = 'block';
-            delBtn.innerHTML = '×';
-            delBtn.onclick = (e) => { e.stopPropagation(); deleteTeacher(t.id); };
-            btn.appendChild(delBtn);
-          }
-
-          grid.appendChild(btn);
-        });
-
-        const addBtn = document.createElement('button');
-        addBtn.className = 'card-btn add-btn';
-        addBtn.textContent = '+ Add Teacher';
-        addBtn.onclick = addTeacher;
-        grid.appendChild(addBtn);
+        grid.appendChild(btn);
       });
+
+      const addBtn = document.createElement('button');
+      addBtn.className = 'card-btn add-btn';
+      addBtn.textContent = '+ Add Teacher';
+      addBtn.onclick = addTeacherPrompt;
+      grid.appendChild(addBtn);
     }
 
     function toggleTeacherEditMode() {
       isTeacherEditMode = !isTeacherEditMode;
-      loadTeachers();
+      renderTeacherGrid(getLocalTeachers());
     }
 
-    function addTeacher() {
-      const name = prompt("Enter teacher name:");
-      if (name && name.trim()) {
-        db.collection('teachers').doc(name.trim()).set({ name: name.trim() });
-      }
+    function addTeacherPrompt() {
+      openModal("Add Teacher", "Teacher Name", (name) => {
+        db.collection('teachers').doc(name).set({ name }).catch(() => {});
+        let local = getLocalTeachers();
+        if (!local.includes(name)) local.push(name);
+        saveLocalTeachers(local);
+        renderTeacherGrid(local);
+      });
     }
 
-    function deleteTeacher(id) {
-      if (confirm(`Delete teacher "${id}" and all associated classes?`)) {
-        db.collection('teachers').doc(id).delete();
+    function deleteTeacher(name) {
+      if (confirm(`Delete teacher "${name}"?`)) {
+        db.collection('teachers').doc(name).delete().catch(() => {});
+        let local = getLocalTeachers().filter(t => t !== name);
+        saveLocalTeachers(local);
+        renderTeacherGrid(local);
       }
     }
 
@@ -324,88 +420,80 @@
     // Class Management
     function loadClasses() {
       showScreen('home-screen');
+      
       db.collection('teachers').doc(currentTeacher).collection('classes').onSnapshot(snapshot => {
-        const grid = document.getElementById('class-grid');
-        grid.innerHTML = '';
-
         let classes = [];
-        snapshot.forEach(doc => classes.push({ id: doc.id, ...doc.data() }));
-
+        snapshot.forEach(doc => classes.push(doc.id));
         if (classes.length === 0 && snapshot.empty) {
-          const defaults = ['1st Hour', '3rd Hour', '5th Hour', 'Homeroom'];
-          defaults.forEach(c => db.collection('teachers').doc(currentTeacher).collection('classes').doc(c).set({ name: c }));
-          return;
+          classes = ['1st Hour', '3rd Hour', '5th Hour', 'Homeroom'];
+          classes.forEach(c => db.collection('teachers').doc(currentTeacher).collection('classes').doc(c).set({ name: c }).catch(() => {}));
+        }
+        saveLocalClasses(currentTeacher, classes);
+        renderClassGrid(classes);
+      }, err => {
+        let local = getLocalClasses(currentTeacher);
+        renderClassGrid(local);
+      });
+    }
+
+    function renderClassGrid(classes) {
+      const grid = document.getElementById('class-grid');
+      grid.innerHTML = '';
+
+      classes.forEach(cName => {
+        const btn = document.createElement('button');
+        btn.className = 'card-btn';
+        btn.textContent = cName;
+        btn.onclick = () => openClass(cName);
+
+        if (isClassEditMode) {
+          const delBtn = document.createElement('div');
+          delBtn.className = 'delete-btn';
+          delBtn.style.display = 'block';
+          delBtn.innerHTML = '×';
+          delBtn.onclick = (e) => { e.stopPropagation(); deleteClass(cName); };
+          btn.appendChild(delBtn);
         }
 
-        classes.forEach(c => {
-          const btn = document.createElement('button');
-          btn.className = 'card-btn';
-          btn.textContent = c.name;
-          btn.onclick = () => openClass(c.name);
-
-          if (isClassEditMode) {
-            const delBtn = document.createElement('div');
-            delBtn.className = 'delete-btn';
-            delBtn.style.display = 'block';
-            delBtn.innerHTML = '×';
-            delBtn.onclick = (e) => { e.stopPropagation(); deleteClass(c.id); };
-            btn.appendChild(delBtn);
-          }
-
-          grid.appendChild(btn);
-        });
-
-        const addBtn = document.createElement('button');
-        addBtn.className = 'card-btn add-btn';
-        addBtn.textContent = '+ Add Class';
-        addBtn.onclick = addClass;
-        grid.appendChild(addBtn);
+        grid.appendChild(btn);
       });
+
+      const addBtn = document.createElement('button');
+      addBtn.className = 'card-btn add-btn';
+      addBtn.textContent = '+ Add Class';
+      addBtn.onclick = addClassPrompt;
+      grid.appendChild(addBtn);
     }
 
     function toggleClassEditMode() {
       isClassEditMode = !isClassEditMode;
-      loadClasses();
+      renderClassGrid(getLocalClasses(currentTeacher));
     }
 
-    function addClass() {
-      const className = prompt("Enter class name:");
-      if (className && className.trim()) {
-        db.collection('teachers').doc(currentTeacher).collection('classes').doc(className.trim()).set({ name: className.trim() });
-      }
+    function addClassPrompt() {
+      openModal("Add Class", "Class Name", (className) => {
+        db.collection('teachers').doc(currentTeacher).collection('classes').doc(className).set({ name: className }).catch(() => {});
+        let local = getLocalClasses(currentTeacher);
+        if (!local.includes(className)) local.push(className);
+        saveLocalClasses(currentTeacher, local);
+        renderClassGrid(local);
+      });
     }
 
     function deleteClass(classId) {
       if (confirm(`Delete class "${classId}"?`)) {
-        db.collection('teachers').doc(currentTeacher).collection('classes').doc(classId).delete();
+        db.collection('teachers').doc(currentTeacher).collection('classes').doc(classId).delete().catch(() => {});
+        let local = getLocalClasses(currentTeacher).filter(c => c !== classId);
+        saveLocalClasses(currentTeacher, local);
+        renderClassGrid(local);
       }
     }
 
     // Board Logic
-    function resetClassToParkingLot(callback) {
-      db.collection('teachers').doc(currentTeacher)
-        .collection('classes').doc(currentClass)
-        .collection('students').get().then(snapshot => {
-          const batch = db.batch();
-          snapshot.forEach(doc => {
-            batch.update(doc.ref, { zone: 'parking-lot', x: null, y: null });
-          });
-          return batch.commit();
-        }).then(() => {
-          if (callback) callback();
-        }).catch(err => {
-          console.error("Error resetting class: ", err);
-          if (callback) callback();
-        });
-    }
-
     function openClass(className) {
       currentClass = className;
       showScreen('board-screen');
-
-      resetClassToParkingLot(() => {
-        listenToClassData();
-      });
+      listenToClassData();
     }
 
     function goHome() {
@@ -429,51 +517,54 @@
     function handleAddStudent(event) {
       const file = event.target.files[0];
       if (!file) return;
-      const studentName = prompt("Enter student's name:");
-      if (!studentName) return;
 
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        const img = new Image();
-        img.src = e.target.result;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = 100;
-          canvas.height = 100;
-          const ctx = canvas.getContext('2d');
+      openModal("Add Student", "Student Name", (studentName) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          const img = new Image();
+          img.src = e.target.result;
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 100;
+            canvas.height = 100;
+            const ctx = canvas.getContext('2d');
 
-          const minDim = Math.min(img.width, img.height);
-          const sx = (img.width - minDim) / 2;
-          const sy = (img.height - minDim) / 2;
+            const minDim = Math.min(img.width, img.height);
+            const sx = (img.width - minDim) / 2;
+            const sy = (img.height - minDim) / 2;
 
-          ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, 100, 100);
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.65);
+            ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, 100, 100);
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.65);
 
-          const student = {
-            id: Date.now().toString(),
-            name: studentName,
-            image: compressedDataUrl,
-            zone: 'parking-lot',
-            x: null,
-            y: null,
-            lastModified: new Date().toISOString()
+            const student = {
+              id: Date.now().toString(),
+              name: studentName,
+              image: compressedDataUrl,
+              zone: 'parking-lot',
+              x: null,
+              y: null
+            };
+
+            studentsData.push(student);
+            renderStudents();
+
+            db.collection('teachers').doc(currentTeacher)
+              .collection('classes').doc(currentClass)
+              .collection('students').doc(student.id).set(student).catch(() => {});
           };
-
-          db.collection('teachers').doc(currentTeacher)
-            .collection('classes').doc(currentClass)
-            .collection('students').doc(student.id).set(student)
-            .catch(err => console.error('Failed to sync student to Firebase', err));
         };
-      };
-      reader.readAsDataURL(file);
+        reader.readAsDataURL(file);
+      });
       event.target.value = '';
     }
 
     function deleteStudent(id) {
+      studentsData = studentsData.filter(s => s.id !== id);
+      renderStudents();
+
       db.collection('teachers').doc(currentTeacher)
         .collection('classes').doc(currentClass)
-        .collection('students').doc(id).delete()
-        .catch(err => console.error('Failed to delete student from Firebase', err));
+        .collection('students').doc(id).delete().catch(() => {});
     }
 
     function listenToClassData() {
@@ -484,16 +575,13 @@
         .collection('students')
         .onSnapshot(snapshot => {
           const liveStudents = [];
-          snapshot.forEach(doc => {
-            liveStudents.push({ id: doc.id, ...doc.data() });
-          });
-
+          snapshot.forEach(doc => liveStudents.push({ id: doc.id, ...doc.data() }));
           studentsData = liveStudents;
           renderStudents();
-          updateSyncStatus('Synced with Firebase');
+          document.getElementById('sync-status').textContent = 'Synced';
         }, err => {
-          console.error('Firebase listener error', err);
-          updateSyncStatus('Error connecting to Firebase');
+          renderStudents();
+          document.getElementById('sync-status').textContent = 'Local Storage Mode';
         });
     }
 
@@ -603,24 +691,16 @@
         student.zone = zone;
         student.x = x;
         student.y = y;
-        student.lastModified = new Date().toISOString();
 
         db.collection('teachers').doc(currentTeacher)
           .collection('classes').doc(currentClass)
-          .collection('students').doc(student.id).update({ zone, x, y })
-          .catch(err => console.error('Failed to update student position in Firebase', err));
+          .collection('students').doc(student.id).update({ zone, x, y }).catch(() => {});
       }
 
       draggedElement = null;
     }
 
     loadTeachers();
-
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js').catch(err => {
-        console.error('Service worker registration failed', err);
-      });
-    }
   </script>
 </body>
 </html>
